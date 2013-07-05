@@ -21,6 +21,7 @@ class PyllLearningAlgo(SemanticsDelegator):
         self.expr = expr
         self.memo = dict(memo)
         self.ctrl = ctrl
+        self.validation_sets = []
         self.results = {
             'best_model': [],
             'loss': [],
@@ -34,7 +35,10 @@ class PyllLearningAlgo(SemanticsDelegator):
         memo[_valid_task] = valid
         memo[_ctrl] = self.ctrl
         model, report = rec_eval(self.expr, memo=memo)
-        model.trained_on = train.name
+        if model:
+            model.trained_on = train.name
+        if valid and valid.name not in self.validation_sets:
+            self.validation_sets.append(valid.name)
         self.results['best_model'].append(
             {
                 'train_name': train.name,
@@ -46,17 +50,25 @@ class PyllLearningAlgo(SemanticsDelegator):
 
 
     def loss_vector_classification(self, model, task):
-        p = model.predict(task.x)
-        err_rate = np.mean(p != task.y)
+        if model is None:
+            err_rate = 1.0
+            self.results['loss'].append(
+                {
+                    'err_rate': err_rate,
+                    'task_name': task.name,
+                })
+        else:
+            p = model.predict(task.x)
+            err_rate = np.mean(p != task.y)
 
-        self.results['loss'].append(
-            {
-                'model_trained_on': model.trained_on,
-                'predictions': p,
-                'err_rate': err_rate,
-                'n': len(p),
-                'task_name': task.name,
-            })
+            self.results['loss'].append(
+                {
+                    'model_trained_on': model.trained_on,
+                    'predictions': p,
+                    'err_rate': err_rate,
+                    'n': len(p),
+                    'task_name': task.name,
+                })
 
         return err_rate
 
@@ -225,18 +237,20 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         valid_x = layer(valid_x)
 
     train_x = train_x.astype('float32')
-    valid_x = train_x.astype('float32')
+    valid_x = valid_x.astype('float32')
 
     shared_train_x = theano.shared(train_x, borrow=True)
     shared_valid_x = theano.shared(valid_x, borrow=True)
     shared_train_y = theano.shared(train_y, borrow=True)
-    shared_valid_y = theano.shared(train_y, borrow=True)
+    shared_valid_y = theano.shared(valid_y, borrow=True)
 
     batch_idx = TT.iscalar()
     s_lr = TT.fscalar()
 
-    train_batch = shared_train_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-    valid_batch = shared_valid_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+    batch_train_x = shared_train_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+    batch_valid_x = shared_valid_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+    batch_train_y = shared_train_y[batch_idx * batch_size:(batch_idx + 1) * batch_size]
+    batch_valid_y = shared_valid_y[batch_idx * batch_size:(batch_idx + 1) * batch_size]
 
     params = []
     Ws = []
@@ -245,14 +259,14 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
     for layer in tuned_layers:
         s_W = theano.shared(layer.W)
         s_b = theano.shared(layer.b)
-        train_batch = layer.theano_compute(train_batch, s_W, s_b)
-        valid_batch = layer.theano_compute(valid_batch, s_W, s_b)
+        batch_train_x = layer.theano_compute(batch_train_x, s_W, s_b)
+        batch_valid_x = layer.theano_compute(batch_valid_x, s_W, s_b)
         Ws.append(s_W)
         bs.append(s_b)
 
-    train_probs = TT.nnet.softmax(train_batch)
+    train_probs = TT.nnet.softmax(batch_train_x)
     train_loss = TT.mean(
-        TT.nnet.categorical_crossentropy(train_probs, shared_train_y))
+        TT.nnet.categorical_crossentropy(train_probs, batch_train_y))
     params = Ws + bs
     gparams = TT.grad(train_loss, params)
     updates = [(p, p - s_lr * gp) for (p, gp) in zip(params, gparams)]
@@ -260,7 +274,7 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
             updates=updates)
 
     valid_err_rate = TT.mean(
-            TT.neq(shared_valid_y, TT.argmax(valid_batch, axis=1)))
+            TT.neq(batch_valid_y, TT.argmax(batch_valid_x, axis=1)))
     valid_err_rate_fn = theano.function([batch_idx], valid_err_rate)
 
     report = {}
@@ -292,31 +306,35 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         e_lr = lr
         e_lr *= min(1, lr_anneal_start / float(epoch + 1))
 
-        logger.info('Epoch=%i best epoch %i valid %f test %f best_epoch_train %f prev_train %f'%(
+        print('Epoch=%i best epoch %i valid %f test %f best_epoch_train %f prev_train %f'%(
             epoch, report['best_epoch'], report['best_epoch_valid'],
             report['best_epoch_test'],
             report['best_epoch_train'], train_rate))
 
-        if epoch > max(config['sup_min_epochs'], 2 * report['best_epoch']):
+        if epoch > max(min_epochs, 2 * report['best_epoch']):
             break
         train_rate = float(np.mean([train_fn(i, e_lr) for i in
             range(n_train_batches)]))
         if not np.isfinite(train_rate):
-            do_test = False
             report['status'] = 'fail'
             report['status_info'] = 'train_rate %f' % train_rate
             return None, report
 
-    best_nnet = NNet(list(fixed_layers))
-    best_Ws = best_params[:len(Ws)]
-    best_bs = best_params[len(Ws):]
-    for W, b in zip(tuned, best_Ws, best_bs):
-        best_nnet.layers.append(
-            tuned.__class__(
-                W.get_value(),
-                b.get_value()))
+    if report['best_epoch'] >= 0:
+        best_nnet = NNet(list(fixed_layers))
+        best_Ws = best_params[:len(Ws)]
+        best_bs = best_params[len(Ws):]
+        for W, b in zip(tuned, best_Ws, best_bs):
+            best_nnet.layers.append(
+                tuned.__class__(
+                    W.get_value(),
+                    b.get_value()))
+        return best_nnet, report
+    else:
+        report['status'] = 'fail'
+        report['status_info'] = 'noprog'
+        return None, report
 
-    return best_nnet, report
 
 
 def nnet1_space(
