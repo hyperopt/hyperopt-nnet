@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import theano
 import theano.tensor as TT
@@ -90,11 +91,13 @@ class NNet(object):
             raise IndexError('no layers')
         return self.layers[0].n_in
 
-
-    def predict(self, X, y):
-        for layer in self.layers[:-1]:
-            X = layer(X)
-        preds = np.argmax(X, axis=1)
+    def predict(self, X, chunk=500):
+        preds = []
+        for i in range(0, len(X), chunk):
+            Xi = X[i * chunk: (i + 1) * chunk]
+            for layer in self.layers[:-1]:
+                Xi = layer(Xi)
+            preds.append(np.argmax(X, axis=1))
         return preds
 
 
@@ -153,8 +156,17 @@ def nnet_add_layer(nnet, layer):
 
 
 @scope.define
-def pca_layer(nnet, *args, **kwargs):
-    raise NotImplementedError()
+def pca_layer(X, energy, eps):
+    import pylearn_pca
+    (eigvals, eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
+            X=X,
+            max_energy_fraction=energy)
+    eigmean = X[0] - centered_trainset[0]
+
+    W = eigvecs / np.sqrt(eigvals + eps)
+    b = -np.dot(eigmean, W)
+    print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
+    return AffineLayer(W, b)
 
 @scope.define
 def column_normalize_layer(X, std_thresh):
@@ -279,13 +291,13 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
 
     report = {}
     report['best_epoch'] = -1
-    report['best_epoch_valid'] = -1
-    report['best_epoch_train'] = -1
-    report['best_epoch_test'] = -1
+    report['best_epoch_valid'] = 1.0
+    report['best_epoch_train'] = 1.0
+    report['best_epoch_test'] = 1.0
     report['status'] = 'ok'
-    valid_rate=-1
-    test_rate=-1
-    train_rate=-1
+    valid_rate=float('inf')
+    test_rate=-float('inf')
+    train_rate=-float('inf')
 
     n_train_batches = len(train_x) // batch_size
     n_valid_batches = len(valid_x) // batch_size
@@ -296,7 +308,7 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         valid_rate_std_thresh = 0.5 * np.sqrt(valid_rate *
                 (1 - valid_rate) / (n_valid_batches * batch_size))
 
-        if valid_rate < (report['best_epoch_valid'] + valid_rate_std_thresh):
+        if valid_rate < (report['best_epoch_valid'] - valid_rate_std_thresh):
             report['best_epoch'] = epoch
             report['best_epoch_test'] = test_rate
             report['best_epoch_valid'] = valid_rate
@@ -324,7 +336,7 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         best_nnet = NNet(list(fixed_layers))
         best_Ws = best_params[:len(Ws)]
         best_bs = best_params[len(Ws):]
-        for W, b in zip(tuned, best_Ws, best_bs):
+        for tuned, W, b in zip(tuned_layers, best_Ws, best_bs):
             best_nnet.layers.append(
                 tuned.__class__(
                     W.get_value(),
@@ -338,8 +350,8 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
 
 
 def nnet1_space(
-    sup_min_epochs=30, # THESE ARE KINDA SMALL FOR SERIOUS RESULTS
-    sup_max_epochs=400):
+    sup_min_epochs=300,
+    sup_max_epochs=4000):
 
     nnet0 = scope.NNet([])
     nnet1 = hp.choice('preproc',
@@ -353,7 +365,9 @@ def nnet1_space(
                 nnet0,
                 scope.pca_layer(
                     scope.getattr(_train_task, 'x'),
-                    energy=hp.uniform('zca_energy', .5, 1))),
+                    energy=hp.uniform('pca_energy', .5, 1),
+                    eps=hp.loguniform('pca_eps', np.log(1e-14),
+                        np.log(1e-1)))),
         ])
     first_tuned_layer = scope.random_logistic_layer(
             n_in=scope.getattr(nnet1, 'n_out'),
