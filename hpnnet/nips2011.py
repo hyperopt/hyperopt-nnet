@@ -17,7 +17,6 @@ _ctrl = Literal()
 
 
 class PyllLearningAlgo(SemanticsDelegator):
-
     def __init__(self, expr, memo, ctrl):
         self.expr = expr
         self.memo = dict(memo)
@@ -115,7 +114,6 @@ class Layer(object):
         return self.W.shape[0]
 
 
-
 class AffineLayer(Layer):
     def __call__(self, X):
         return np.dot(X, self.W) + self.b
@@ -143,12 +141,14 @@ class LogisticLayer(Layer):
     def theano_compute(self, X, W, b):
         return 1. / (1 + TT.exp(-TT.dot(X, W) - b))
 
+
 class TanhLayer(Layer):
     def __call__(self, X):
         return np.tanh(np.dot(X, self.W) + self.b)
 
     def theano_compute(self, X, W, b):
         return TT.tanh(X * W) + b
+
 
 @scope.define
 def nnet_add_layer(nnet, layer):
@@ -167,6 +167,7 @@ def pca_layer(X, energy, eps):
     b = -np.dot(eigmean, W)
     print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
     return AffineLayer(W, b)
+
 
 @scope.define
 def column_normalize_layer(X, std_thresh):
@@ -213,6 +214,7 @@ def zero_layer(n_in, n_out):
     W = np.zeros((n_in, n_out), dtype='float32')
     b = np.zeros(n_out, dtype='float32')
     return LogisticLayer(W, b)
+
 
 @scope.define
 def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
@@ -346,7 +348,6 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         report['status'] = 'fail'
         report['status_info'] = 'noprog'
         return None, report
-
 
 
 def nnet1_space(
