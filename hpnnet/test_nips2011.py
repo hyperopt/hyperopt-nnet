@@ -13,15 +13,22 @@ def eval_fn(expr, memo, ctrl):
     algo = PyllLearningAlgo(expr, memo, ctrl)
     protocol.protocol(algo)
     results = algo.results
-    loss = np.mean([
-            d['err_rate'] for d in results['loss']
-            if d['task_name'] in algo.validation_sets
-            ])
-    return {
-            'loss': loss,
-            'status': 'ok',
-            'algo_results': results,
-            }
+    valid_losses = []
+    for dct in results['best_model']:
+        del dct['model'] # -- too big, not worth saving
+        valid_losses.append(dct['report']['best_epoch_valid'])
+
+    if valid_losses:
+        return {
+                'loss': float(np.mean(valid_losses)),
+                'status': 'ok',
+                'algo_results': results,
+                }
+    else:
+        return {
+                'status': 'fail',
+                'algo_results': results,
+                }
 
 def test_nnet_iris():
 

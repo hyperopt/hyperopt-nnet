@@ -7,13 +7,13 @@ from skdata.base import SemanticsDelegator
 
 from hyperopt.pyll import scope
 from hyperopt.pyll import rec_eval
-from hyperopt.pyll import Literal
+from hyperopt.utils import use_obj_for_literal_in_memo
 from hyperopt import hp
 
 
-_train_task = Literal()
-_valid_task = Literal()
-_ctrl = Literal()
+class _train_task(object): pass
+class _valid_task(object): pass
+class _ctrl(object): pass
 
 
 class PyllLearningAlgo(SemanticsDelegator):
@@ -31,9 +31,9 @@ class PyllLearningAlgo(SemanticsDelegator):
     def best_model_vector_classification(self, train, valid):
         # TODO: use validation set if not-None
         memo = dict(self.memo)
-        memo[_train_task] = train
-        memo[_valid_task] = valid
-        memo[_ctrl] = self.ctrl
+        use_obj_for_literal_in_memo(self.expr, train, _train_task, memo)
+        use_obj_for_literal_in_memo(self.expr, valid, _valid_task, memo)
+        use_obj_for_literal_in_memo(self.expr, self.ctrl, _ctrl, memo)
         model, report = rec_eval(self.expr, memo=memo)
         if model:
             model.trained_on = train.name
