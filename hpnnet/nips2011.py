@@ -61,10 +61,15 @@ class PyllLearningAlgo(SemanticsDelegator):
             p = model.predict(task.x)
             err_rate = np.mean(p != task.y)
 
+            # save as string to save space and maintain
+            # readability
+            assert np.max(p) < 10
+            p_str = ''.join(map(str, p))
+
             self.results['loss'].append(
                 {
                     'model_trained_on': model.trained_on,
-                    'predictions': p,
+                    'predictions': p_str,
                     'err_rate': err_rate,
                     'n': len(p),
                     'task_name': task.name,
@@ -90,13 +95,14 @@ class NNet(object):
             raise IndexError('no layers')
         return self.layers[0].n_in
 
-    def predict(self, X, chunk=500):
+    def predict(self, X, chunk=256):
         preds = []
         for i in range(0, len(X), chunk):
-            Xi = X[i * chunk: (i + 1) * chunk]
-            for layer in self.layers[:-1]:
+            Xi = X[i: i + chunk]
+            for layer in self.layers:
                 Xi = layer(Xi)
-            preds.append(np.argmax(X, axis=1))
+            preds.extend(np.argmax(Xi, axis=1))
+        assert len(preds) == len(X), (len(preds), len(X))
         return preds
 
 
@@ -404,4 +410,36 @@ def nnet1_space(
         )
 
     return nnet4
+
+
+def eval_fn(expr, memo, ctrl, protocol_cls):
+    protocol = protocol_cls()
+    algo = PyllLearningAlgo(expr, memo, ctrl)
+    protocol.protocol(algo)
+    results = algo.results
+    valid_losses = []
+    true_loss = None
+    for dct in results['best_model']:
+        del dct['model'] # -- too big, not worth saving
+        valid_losses.append(dct['report']['best_epoch_valid'])
+
+    for dct in results['loss']:
+        if dct['task_name'] == 'test':
+            true_loss = dct['err_rate']
+
+    if valid_losses:
+        rval = {
+                'loss': float(np.mean(valid_losses)),
+                'status': 'ok',
+                'algo_results': results,
+                }
+    else:
+        rval = {
+                'status': 'fail',
+                'algo_results': results,
+                }
+    if true_loss != None:
+        rval['true_loss'] = true_loss
+
+    return rval
 

@@ -33,3 +33,10 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
+
+
+#VIM
+*.swp
+*.swo
+
+examples/*.pkl
