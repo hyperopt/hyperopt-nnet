@@ -1,364 +1,54 @@
-import copy
-import numpy as np
-import theano
-import theano.tensor as TT
+"""
+Neural Network (NNet) and Deep Belief Network (DBN) search spaces used in [1]
+and [2].
 
-from skdata.base import SemanticsDelegator
+The functions in this file return pyll graphs that can be used as the `space`
+argument to e.g. `hyperopt.fmin`. The pyll graphs include hyperparameter
+constructs (e.g. `hyperopt.hp.uniform`) so `hyperopt.fmin` can perform
+hyperparameter optimization.
+
+See ./skdata_learning_algo.py for example usage of these functions.
+
+
+[1] Bergstra, J.,  Bardenet, R., Bengio, Y., Kegl, B. (2011). Algorithms
+for Hyper-parameter optimization, NIPS 2011.
+
+[2] Bergstra, J., Bengio, Y. (2012). Random Search for Hyper-Parameter
+Optimization, JMLR 13:281--305.
+
+"""
+
+__author__ = "James Bergstra"
+__license__ = "BSD-3"
+
+import numpy as np
 
 from hyperopt.pyll import scope
-from hyperopt.pyll import rec_eval
-from hyperopt.utils import use_obj_for_literal_in_memo
 from hyperopt import hp
 
+import pyll_stubs
+import nnet  # -- load scope with nnet symbols
 
-class _train_task(object): pass
-class _valid_task(object): pass
-class _ctrl(object): pass
 
+def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
+    """
+    Return a hyperopt-compatible pyll expression for a trained neural network.
 
-class PyllLearningAlgo(SemanticsDelegator):
-    def __init__(self, expr, memo, ctrl):
-        self.expr = expr
-        self.memo = dict(memo)
-        self.ctrl = ctrl
-        self.validation_sets = []
-        self.results = {
-            'best_model': [],
-            'loss': [],
-        }
+    The trained neural network will have one hidden layer, and may
+    have an affine first layer that does column normalization or PCA
+    pre-processing.
 
+    The training program is built using stub literals `pyll_stubs.train_task`
+    and `pyll_stubs.valid_task`.  When evaluating the pyll program, these
+    literals must be replaced with skdata Task objects with
+    `vector_classification` semantics.  See `skdata_learning_algo.py` for how
+    to use the `use_obj_for_literal_in_memo` function to swap live Task
+    objects in for these stubs.
 
-    def best_model_vector_classification(self, train, valid):
-        # TODO: use validation set if not-None
-        memo = dict(self.memo)
-        use_obj_for_literal_in_memo(self.expr, train, _train_task, memo)
-        use_obj_for_literal_in_memo(self.expr, valid, _valid_task, memo)
-        use_obj_for_literal_in_memo(self.expr, self.ctrl, _ctrl, memo)
-        model, report = rec_eval(self.expr, memo=memo)
-        if model:
-            model.trained_on = train.name
-        if valid and valid.name not in self.validation_sets:
-            self.validation_sets.append(valid.name)
-        self.results['best_model'].append(
-            {
-                'train_name': train.name,
-                'valid_name': valid.name if valid else None,
-                'model': model,
-                'report': report,
-            })
-        return model
+    The search space described by this function corresponds to the one-layer
+    neural network with pre-processing used in [1] and [2].
 
-
-    def loss_vector_classification(self, model, task):
-        if model is None:
-            err_rate = 1.0
-            self.results['loss'].append(
-                {
-                    'err_rate': err_rate,
-                    'task_name': task.name,
-                })
-        else:
-            p = model.predict(task.x)
-            err_rate = np.mean(p != task.y)
-
-            # save as string to save space and maintain
-            # readability
-            assert np.max(p) < 10
-            p_str = ''.join(map(str, p))
-
-            self.results['loss'].append(
-                {
-                    'model_trained_on': model.trained_on,
-                    'predictions': p_str,
-                    'err_rate': err_rate,
-                    'n': len(p),
-                    'task_name': task.name,
-                })
-
-        return err_rate
-
-
-@scope.define
-class NNet(object):
-    def __init__(self, layers):
-        self.layers = list(layers)
-
-    @property
-    def n_out(self):
-        if not self.layers:
-            raise IndexError('no layers')
-        return self.layers[-1].n_out
-
-    @property
-    def n_in(self):
-        if not self.layers:
-            raise IndexError('no layers')
-        return self.layers[0].n_in
-
-    def predict(self, X, chunk=256):
-        preds = []
-        for i in range(0, len(X), chunk):
-            Xi = X[i: i + chunk]
-            for layer in self.layers:
-                Xi = layer(Xi)
-            preds.extend(np.argmax(Xi, axis=1))
-        assert len(preds) == len(X), (len(preds), len(X))
-        return preds
-
-
-class Layer(object):
-    def __init__(self, W, b):
-        self.W = W
-        self.b = b
-
-    @property
-    def n_out(self):
-        return self.W.shape[1]
-
-    @property
-    def n_in(self):
-        return self.W.shape[0]
-
-
-class AffineLayer(Layer):
-    def __call__(self, X):
-        return np.dot(X, self.W) + self.b
-
-    def theano_compute(self, X, W, b):
-        return TT.dot(X, W) + b
-
-
-class AffineElemwiseLayer(Layer):
-    def __call__(self, X):
-        return X * self.W + self.b
-
-    def theano_compute(self, X, W, b):
-        return X * W + b
-
-    @property
-    def n_in(self):
-        return self.W.shape[1]
-
-
-class LogisticLayer(Layer):
-    def __call__(self, X):
-        return 1. / (1 + np.exp(-np.dot(X, self.W) - self.b))
-
-    def theano_compute(self, X, W, b):
-        return 1. / (1 + TT.exp(-TT.dot(X, W) - b))
-
-
-class TanhLayer(Layer):
-    def __call__(self, X):
-        return np.tanh(np.dot(X, self.W) + self.b)
-
-    def theano_compute(self, X, W, b):
-        return TT.tanh(X * W) + b
-
-
-@scope.define
-def nnet_add_layer(nnet, layer):
-    return NNet(nnet.layers + [layer])
-
-
-@scope.define
-def pca_layer(X, energy, eps):
-    import pylearn_pca
-    (eigvals, eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
-            X=X,
-            max_energy_fraction=energy)
-    eigmean = X[0] - centered_trainset[0]
-
-    W = eigvecs / np.sqrt(eigvals + eps)
-    b = -np.dot(eigmean, W)
-    print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
-    return AffineLayer(W, b)
-
-
-@scope.define
-def column_normalize_layer(X, std_thresh):
-    mean = np.mean(X, axis=0).reshape((1, X.shape[1]))
-    std = np.std(X, axis=0).reshape((1, X.shape[1]))
-    return AffineElemwiseLayer(
-        W=1. / (std + std_thresh),
-        b=-mean)
-
-
-@scope.define
-def random_logistic_layer(n_in, n_out, dist,
-    scale_heuristic, seed):
-
-    rng = np.random.RandomState(seed)
-    if dist == 'uniform':
-        WT = rng.uniform(low=-1, high=1, size=(n_out, n_in))
-    elif dist == 'normal':
-        WT = rng.randn(n_out, n_in)
-    else:
-        raise ValueError('W_init_dist', dist)
-
-    # N.B. the weights are transposed so that as the number of hidden units
-    # changes,
-    # the first hidden units are always the same vectors.  this makes it
-    # easier to isolate the effect of random initialization from the other
-    # hyperparameters (otherwise changing n_out would be pretty much
-    # equivalent to re-seeding).
-    W = WT.T.astype('float32')
-
-    if scale_heuristic[0] == 'old':
-        W *= scale_heuristic[1] / np.sqrt(n_in)
-    elif scale_heuristic[0] == 'Glorot':
-        W *= np.sqrt(6.0 / (n_in + n_out))
-    else:
-        raise ValueError(scale_heuristic)
-
-    b = np.zeros(n_out, dtype='float32')
-    return LogisticLayer(W, b)
-
-
-@scope.define
-def zero_layer(n_in, n_out):
-    W = np.zeros((n_in, n_out), dtype='float32')
-    b = np.zeros(n_out, dtype='float32')
-    return LogisticLayer(W, b)
-
-
-@scope.define
-def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
-        max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty):
-
-    layers = nnet.layers
-
-    fixed_layers = layers[:layers.index(first_tuned_layer)]
-    tuned_layers = layers[layers.index(first_tuned_layer):]
-
-    # Figure something out for validation
-    if valid_task is None:
-        from sklearn import cross_validation
-        N = len(train_task.x)
-        kf = cross_validation.KFold(N, 5)
-        train_idxs, valid_idxs = iter(kf).next()
-
-        idxmap = np.random.RandomState(123).permutation(N)
-
-        train_x = train_task.x[idxmap[train_idxs]]
-        valid_x = train_task.x[idxmap[valid_idxs]]
-        train_y = train_task.y[idxmap[train_idxs]]
-        valid_y = train_task.y[idxmap[valid_idxs]]
-    else:
-        train_x = train_task.x
-        valid_x = valid_task.x
-        train_y = train_task.y
-        valid_y = valid_task.y
-
-    # Filter X through the fixed layers, aka apply
-    # pre-processing
-    for layer in fixed_layers:
-        train_x = layer(train_x)
-        valid_x = layer(valid_x)
-
-    train_x = train_x.astype('float32')
-    valid_x = valid_x.astype('float32')
-
-    shared_train_x = theano.shared(train_x, borrow=True)
-    shared_valid_x = theano.shared(valid_x, borrow=True)
-    shared_train_y = theano.shared(train_y, borrow=True)
-    shared_valid_y = theano.shared(valid_y, borrow=True)
-
-    batch_idx = TT.iscalar()
-    s_lr = TT.fscalar()
-
-    batch_train_x = shared_train_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-    batch_valid_x = shared_valid_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-    batch_train_y = shared_train_y[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-    batch_valid_y = shared_valid_y[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-
-    params = []
-    Ws = []
-    bs = []
-
-    for layer in tuned_layers:
-        s_W = theano.shared(layer.W)
-        s_b = theano.shared(layer.b)
-        batch_train_x = layer.theano_compute(batch_train_x, s_W, s_b)
-        batch_valid_x = layer.theano_compute(batch_valid_x, s_W, s_b)
-        Ws.append(s_W)
-        bs.append(s_b)
-
-    train_probs = TT.nnet.softmax(batch_train_x)
-    train_loss = TT.mean(
-        TT.nnet.categorical_crossentropy(train_probs, batch_train_y))
-    params = Ws + bs
-    gparams = TT.grad(train_loss, params)
-    updates = [(p, p - s_lr * gp) for (p, gp) in zip(params, gparams)]
-    train_fn = theano.function([batch_idx, s_lr], train_loss,
-            updates=updates)
-
-    valid_err_rate = TT.mean(
-            TT.neq(batch_valid_y, TT.argmax(batch_valid_x, axis=1)))
-    valid_err_rate_fn = theano.function([batch_idx], valid_err_rate)
-
-    report = {}
-    report['best_epoch'] = -1
-    report['best_epoch_valid'] = 1.0
-    report['best_epoch_train'] = 1.0
-    report['best_epoch_test'] = 1.0
-    report['status'] = 'ok'
-    valid_rate=float('inf')
-    test_rate=-float('inf')
-    train_rate=-float('inf')
-
-    n_train_batches = len(train_x) // batch_size
-    n_valid_batches = len(valid_x) // batch_size
-
-    for epoch in xrange(max_epochs):
-        valid_rate = float(np.mean([valid_err_rate_fn(i)
-            for i in range(n_valid_batches)]))
-        valid_rate_std_thresh = 0.5 * np.sqrt(valid_rate *
-                (1 - valid_rate) / (n_valid_batches * batch_size))
-
-        if valid_rate < (report['best_epoch_valid'] - valid_rate_std_thresh):
-            report['best_epoch'] = epoch
-            report['best_epoch_test'] = test_rate
-            report['best_epoch_valid'] = valid_rate
-            report['best_epoch_train'] = train_rate
-            best_params = copy.deepcopy(params)
-
-        e_lr = lr
-        e_lr *= min(1, lr_anneal_start / float(epoch + 1))
-
-        print('Epoch=%i best epoch %i valid %f test %f best_epoch_train %f prev_train %f'%(
-            epoch, report['best_epoch'], report['best_epoch_valid'],
-            report['best_epoch_test'],
-            report['best_epoch_train'], train_rate))
-
-        if epoch > max(min_epochs, 2 * report['best_epoch']):
-            break
-        train_rate = float(np.mean([train_fn(i, e_lr) for i in
-            range(n_train_batches)]))
-        if not np.isfinite(train_rate):
-            report['status'] = 'fail'
-            report['status_info'] = 'train_rate %f' % train_rate
-            return None, report
-
-    if report['best_epoch'] >= 0:
-        best_nnet = NNet(list(fixed_layers))
-        best_Ws = best_params[:len(Ws)]
-        best_bs = best_params[len(Ws):]
-        for tuned, W, b in zip(tuned_layers, best_Ws, best_bs):
-            best_nnet.layers.append(
-                tuned.__class__(
-                    W.get_value(),
-                    b.get_value()))
-        return best_nnet, report
-    else:
-        report['status'] = 'fail'
-        report['status_info'] = 'noprog'
-        return None, report
-
-
-def nnet1_space(
-    sup_min_epochs=300,
-    sup_max_epochs=4000):
+    """
 
     nnet0 = scope.NNet([])
     nnet1 = hp.choice('preproc',
@@ -366,12 +56,12 @@ def nnet1_space(
             scope.nnet_add_layer(
                 nnet0,
                 scope.column_normalize_layer(
-                    scope.getattr(_train_task, 'x'),
+                    scope.getattr(pyll_stubs.train_task, 'x'),
                     std_thresh=hp.loguniform('colnorm_thresh', -8, -2))),
             scope.nnet_add_layer(
                 nnet0,
                 scope.pca_layer(
-                    scope.getattr(_train_task, 'x'),
+                    scope.getattr(pyll_stubs.train_task, 'x'),
                     energy=hp.uniform('pca_energy', .5, 1),
                     eps=hp.loguniform('pca_eps', np.log(1e-14),
                         np.log(1e-1)))),
@@ -391,12 +81,12 @@ def nnet1_space(
         nnet2,
         scope.zero_layer(
             n_in=scope.getattr(nnet2, 'n_out'),
-            n_out=scope.getattr(_train_task, 'n_classes')))
+            n_out=scope.getattr(pyll_stubs.train_task, 'n_classes')))
 
     nnet4 = scope.sgd_finetune(
         nnet3,
-        _train_task,
-        _valid_task,
+        pyll_stubs.train_task,
+        pyll_stubs.valid_task,
         first_tuned_layer=first_tuned_layer,
         max_epochs=sup_max_epochs,
         min_epochs=sup_min_epochs,
@@ -411,35 +101,4 @@ def nnet1_space(
 
     return nnet4
 
-
-def eval_fn(expr, memo, ctrl, protocol_cls):
-    protocol = protocol_cls()
-    algo = PyllLearningAlgo(expr, memo, ctrl)
-    protocol.protocol(algo)
-    results = algo.results
-    valid_losses = []
-    true_loss = None
-    for dct in results['best_model']:
-        del dct['model'] # -- too big, not worth saving
-        valid_losses.append(dct['report']['best_epoch_valid'])
-
-    for dct in results['loss']:
-        if dct['task_name'] == 'test':
-            true_loss = dct['err_rate']
-
-    if valid_losses:
-        rval = {
-                'loss': float(np.mean(valid_losses)),
-                'status': 'ok',
-                'algo_results': results,
-                }
-    else:
-        rval = {
-                'status': 'fail',
-                'algo_results': results,
-                }
-    if true_loss != None:
-        rval['true_loss'] = true_loss
-
-    return rval
 
