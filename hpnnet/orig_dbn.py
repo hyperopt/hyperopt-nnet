@@ -1,3 +1,7 @@
+# THIS IS AN OLD FILE TO REIMPLEMENT, NOT MEANT TO BE IMPORTED
+raise ImportError()
+
+
 """Deep Belief Netork as Bandit
 """
 import copy
