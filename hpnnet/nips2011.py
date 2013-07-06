@@ -49,6 +49,10 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
     neural network with pre-processing used in [1] and [2].
 
     """
+    import sys
+    print >> sys.stderr, "TODO: l2 penalty"
+    print >> sys.stderr, "TODO: PCA eps fixed to 1e-14"
+    print >> sys.stderr, "TODO: time_limit"
 
     nnet0 = scope.NNet([])
     nnet1 = hp.choice('preproc',

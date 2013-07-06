@@ -76,6 +76,7 @@ class PyllLearningAlgo(SemanticsDelegator):
 
 
 def eval_fn(expr, memo, ctrl, protocol_cls):
+    import nnet # --make sure damn pyll symbols are loaded
     protocol = protocol_cls()
     algo = PyllLearningAlgo(expr, memo, ctrl)
     protocol.protocol(algo)
