@@ -77,10 +77,10 @@ class AffineElemwiseLayer(Layer):
 
 class LogisticLayer(Layer):
     def __call__(self, X):
-        return 1. / (1 + np.exp(-np.dot(X, self.W) - self.b))
+        return 1. / (1. + np.exp(-np.dot(X, self.W) - self.b))
 
     def theano_compute(self, X, W, b):
-        return 1. / (1 + TT.exp(-TT.dot(X, W) - b))
+        return 1. / (1. + TT.exp(-TT.dot(X, W) - b))
 
 
 class TanhLayer(Layer):
@@ -225,8 +225,10 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
     params = Ws + bs
     gparams = TT.grad(train_loss, params)
     updates = [(p, p - s_lr * gp) for (p, gp) in zip(params, gparams)]
-    train_fn = theano.function([batch_idx, s_lr], train_loss,
-            updates=updates)
+    train_fn = theano.function(
+        [batch_idx, s_lr], train_loss,
+        updates=updates,
+        allow_input_downcast=True)
 
     valid_err_rate = TT.mean(
             TT.neq(batch_valid_y, TT.argmax(batch_valid_x, axis=1)))
