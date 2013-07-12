@@ -30,7 +30,8 @@ import pyll_stubs
 import nnet  # -- load scope with nnet symbols
 
 
-def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
+def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000,
+                       max_seconds=10 * 60):
     """
     Return a hyperopt-compatible pyll expression for a trained neural network.
 
@@ -49,10 +50,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
     neural network with pre-processing used in [1] and [2].
 
     """
-    import sys
-    print >> sys.stderr, "TODO: l2 penalty"
-    print >> sys.stderr, "TODO: PCA eps fixed to 1e-14"
-    print >> sys.stderr, "TODO: time_limit"
+    time_limit = scope.time() + max_seconds
 
     nnet0 = scope.NNet([])
     nnet1 = hp.choice('preproc',
@@ -67,10 +65,9 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
                 scope.pca_layer(
                     scope.getattr(pyll_stubs.train_task, 'x'),
                     energy=hp.uniform('pca_energy', .5, 1),
-                    eps=hp.loguniform('pca_eps', np.log(1e-14),
-                        np.log(1e-1)))),
+                    eps=1e-14)),
         ])
-    first_tuned_layer = scope.random_logistic_layer(
+    hidden_layer = scope.random_logistic_layer(
             n_in=scope.getattr(nnet1, 'n_out'),
             n_out=hp.qloguniform(
                 'nhid1', np.log(16), np.log(2000), q=16),
@@ -80,7 +77,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
                 ('Glorot', )]),
             seed=hp.choice('iseed', [5, 6, 7, 8]),
             )
-    nnet2 = scope.nnet_add_layer(nnet1, first_tuned_layer)
+    nnet2 = scope.nnet_add_layer(nnet1, hidden_layer)
     nnet3 = scope.nnet_add_layer(
         nnet2,
         scope.zero_layer(
@@ -91,7 +88,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
         nnet3,
         pyll_stubs.train_task,
         pyll_stubs.valid_task,
-        first_tuned_layer=first_tuned_layer,
+        fixed_nnet=nnet1,
         max_epochs=sup_max_epochs,
         min_epochs=sup_min_epochs,
         batch_size=hp.choice('batch_size', [20, 100]),
@@ -101,6 +98,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000):
         l2_penalty=hp.choice('lr_penalty', [
             0,
             hp.lognormal('l2_penalty_nz', np.log(1.0e-6), 3.)]),
+        time_limit=time_limit,
         )
 
     return nnet4

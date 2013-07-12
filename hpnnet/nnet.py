@@ -7,11 +7,18 @@ __author__ = "James Bergstra"
 __license__ = "BSD-3"
 
 import copy
+import time as time_module
 import numpy as np
 import theano
 import theano.tensor as TT
 
 from hyperopt.pyll import scope
+
+# TODO: move this to hyperopt.pyll
+@scope.define
+def time():
+    return time_module.time()
+
 
 @scope.define
 class NNet(object):
@@ -33,10 +40,14 @@ class NNet(object):
     def predict(self, X, chunk=256):
         preds = []
         for i in range(0, len(X), chunk):
+            t0 = time_module.time()
             Xi = X[i: i + chunk]
             for layer in self.layers:
                 Xi = layer(Xi)
             preds.extend(np.argmax(Xi, axis=1))
+            t1 = time_module.time()
+            if t1 - t0 > .1:
+                print 'WARNING: predicting single chunk took', (t1 - t0)
         assert len(preds) == len(X), (len(preds), len(X))
         return preds
 
@@ -158,13 +169,20 @@ def zero_layer(n_in, n_out):
 
 
 @scope.define
-def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
-        max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty):
+def sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
+    max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty,
+    time_limit=None):
+
+    import sys
+    print >> sys.stderr, "TODO: implement time_limit"
 
     layers = nnet.layers
 
-    fixed_layers = layers[:layers.index(first_tuned_layer)]
-    tuned_layers = layers[layers.index(first_tuned_layer):]
+    fixed_layers = [l for l in nnet.layers if l in fixed_nnet.layers]
+    tuned_layers = [l for l in nnet.layers if l not in fixed_nnet.layers]
+
+    # we need all the fixed layers to precede all the tuned layers
+    assert layers[:len(fixed_layers)] == fixed_layers
 
     # Figure something out for validation
     if valid_task is None:
@@ -211,6 +229,8 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
     Ws = []
     bs = []
 
+    l2_cost = 0
+
     for layer in tuned_layers:
         s_W = theano.shared(layer.W)
         s_b = theano.shared(layer.b)
@@ -218,15 +238,17 @@ def sgd_finetune(nnet, train_task, valid_task, first_tuned_layer,
         batch_valid_x = layer.theano_compute(batch_valid_x, s_W, s_b)
         Ws.append(s_W)
         bs.append(s_b)
+        l2_cost = l2_cost + (s_W ** 2).sum()
 
     train_probs = TT.nnet.softmax(batch_train_x)
     train_loss = TT.mean(
         TT.nnet.categorical_crossentropy(train_probs, batch_train_y))
+    regularized_loss = train_loss + l2_penalty * l2_cost
     params = Ws + bs
-    gparams = TT.grad(train_loss, params)
+    gparams = TT.grad(regularized_loss, params)
     updates = [(p, p - s_lr * gp) for (p, gp) in zip(params, gparams)]
     train_fn = theano.function(
-        [batch_idx, s_lr], train_loss,
+        [batch_idx, s_lr], regularized_loss,
         updates=updates,
         allow_input_downcast=True)
 
