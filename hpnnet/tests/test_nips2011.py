@@ -1,11 +1,12 @@
 from functools import partial
-import numpy as np
+#import numpy as np
 import hyperopt
-from hyperopt import pyll
+#from hyperopt import pyll
 from hyperopt.fmin import fmin_pass_expr_memo_ctrl
 
 from hpnnet.nips2011 import nnet1_preproc_space
-from hpnnet.skdata_learning_algo import PyllLearningAlgo, eval_fn
+#from hpnnet.skdata_learning_algo import PyllLearningAlgo
+from hpnnet.skdata_learning_algo import eval_fn
 
 from skdata.larochelle_etal_2007.view import RectanglesVectorXV
 from skdata.larochelle_etal_2007.view \
