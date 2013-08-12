@@ -22,19 +22,23 @@ def time():
 
 @scope.define
 class NNet(object):
-    def __init__(self, layers):
+    def __init__(self, layers, n_out=None):
         self.layers = list(layers)
+        self._n_out = n_out
 
     @property
     def n_out(self):
         if not self.layers:
-            raise IndexError('no layers')
+            if self._n_out is None:
+                raise IndexError('n_out: no layers')
+            else:
+                return self._n_out
         return self.layers[-1].n_out
 
     @property
     def n_in(self):
         if not self.layers:
-            raise IndexError('no layers')
+            raise IndexError('n_in: no layers')
         return self.layers[0].n_in
 
     def predict(self, X, chunk=256):
@@ -85,7 +89,6 @@ class AffineElemwiseLayer(Layer):
     def n_in(self):
         return self.W.shape[1]
 
-
 class LogisticLayer(Layer):
     def __call__(self, X):
         return 1. / (1. + np.exp(-np.dot(X, self.W) - self.b))
@@ -100,6 +103,17 @@ class TanhLayer(Layer):
 
     def theano_compute(self, X, W, b):
         return TT.tanh(X * W) + b
+
+
+class ClipLayer(Layer):
+    def __call__(self, X):
+        tmp = np.dot(X, self.W) + self.b
+        return np.clip(tmp, 0, 1)
+
+
+@scope.define
+def layer_transform(layer, X):
+    return layer(X)
 
 
 @scope.define
@@ -120,6 +134,20 @@ def pca_layer(X, energy, eps):
     print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
     return AffineLayer(W, b)
 
+@scope.define
+def zca_layer(X, energy, eps):
+    (eigvals,eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
+            X=X_train,
+            max_energy_fraction=config['preprocessing']['energy'])
+    eigmean = X_train[0] - centered_trainset[0]
+
+    W = eigvecs / np.sqrt(eigvals + eps)
+    #b = -np.dot(eigmean, W)
+    print('ZCA kept %i of %i components' % (W.shape[1], X.shape[1]))
+    # TODO: verify that this is actually the right algorithm
+    l0 = AffineLayer(W, 0)
+    l1 = ClipLayer(W.T, 0)
+    return [l0, l1]
 
 @scope.define
 def column_normalize_layer(X, std_thresh):
@@ -128,6 +156,19 @@ def column_normalize_layer(X, std_thresh):
     return AffineElemwiseLayer(
         W=1. / (std + std_thresh),
         b=-mean)
+
+@scope.define
+def layer_pretrain_cd(layer,
+                      X, 
+                      lr,
+                      epochs,
+                      batchsize,
+                      sample_v0s, 
+                      lr_anneal_start,
+                      time_limit=None):
+    import sys
+    print >> sys.stderr, "ERROR: CD Not Implemented"
+    return layer
 
 
 @scope.define
@@ -168,8 +209,8 @@ def zero_layer(n_in, n_out):
     return LogisticLayer(W, b)
 
 
-@scope.define
-def sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
+@scope.define_info(o_len=2)
+def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
     max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty,
     time_limit=None):
 

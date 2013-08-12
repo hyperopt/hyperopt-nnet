@@ -24,12 +24,13 @@ import numpy as np
 
 from hyperopt.pyll import scope
 from hyperopt import hp
+from hyperopt.fmin import fmin_pass_expr_memo_ctrl
 
 import pyll_stubs
 import nnet  # -- load scope with nnet symbols
 
 
-def dbn_preproc_space(
+def preproc_space(
     sup_min_epochs=300,
     sup_max_epochs=4000,
     # the original timeout was 60 minutes, but computers are faster now
@@ -58,19 +59,24 @@ def dbn_preproc_space(
 
     """
 
-    nnet0 = scope.NNet([])
+    X = scope.getattr(pyll_stubs.train_task, 'x')
+    nnet0 = scope.NNet([], n_out=scope.getattr(X, 'shape')[1])
     nnet1 = hp.choice('preproc',
         [
             nnet0,                 # -- raw data
             scope.nnet_add_layer(  # -- ZCA of data
                 nnet0,
+                # TODO: accept two return layers here
                 scope.zca_layer(
-                    scope.getattr(pyll_stubs.train_task, 'x'),
+                    X,
                     energy=hp.uniform('pca_energy', .5, 1),
-                    # would now have made this hyperparam
                     eps=1e-14,
                     )),
         ])
+
+    # TODO: make layer_transform work on whole nnet??
+    # TODO: make this work when nnet1 is actually null nnet0 model
+    X = scope.layer_transform(nnet1, X)
 
     param_seed = hp.choice('iseed', [5, 6, 7, 8])
 
@@ -83,24 +89,35 @@ def dbn_preproc_space(
             # -- hack to get different seeds for dif't layers
             seed=param_seed + cd_epochs_max,
             n_in=scope.getattr(nnet_i, 'n_out'),
-            n_out=hp.qloguniform('n_hid_%i' % ii, np.log(2**7), np.log(2**12), q=16),
+            n_out=hp.qloguniform('n_hid_%i' % ii,
+                                 np.log(2**7),
+                                 np.log(2**12),
+                                 q=16),
             W_init_dist=hp.choice('W_idist_%i' % ii, ['uniform', 'normal']),
             W_init_algo=hp.choice('W_ialgo_%i' % ii, ['old', 'Xavier']),
             # -- multiplier should have been nested to go with algo=='old'
             W_init_algo_old_multiplier=hp.lognormal('W_imult_%i' % ii, 0, 1),
             )
-        rbm = scope.layer_train_rbm(
+        rbm = scope.layer_pretrain_cd(
             layer,
-            cd_epochs=hp.qloguniform('cd_epochs_%i' % ii, np.log(1), np.log(cd_epochs_max)),
+            X,
+            lr=hp.lognormal('cd_lr_%i' % ii, np.log(.01), 2),
+            epochs=hp.qloguniform('cd_epochs_%i' % ii,
+                                  np.log(1),
+                                  np.log(cd_epochs_max),
+                                  q=1),
             # -- for whatever reason (?), this was fixed
-            cd_batchsize=100,
-            cd_sample_v0s=hp.choice('sample_v0s_%i' % ii, [False, True]),
-            cd_lr=hp.lognormal('cd_lr_%i' % ii, np.log(.01), 2),
-            cd_lr_anneal_start=hp.qloguniform('lr_anneal_%i' % ii, np.log(10), np.log(10000)),
+            batchsize=100,
+            sample_v0s=hp.choice('sample_v0s_%i' % ii, [False, True]),
+            lr_anneal_start=hp.qloguniform('lr_anneal_%i' % ii,
+                                           np.log(10),
+                                           np.log(10000),
+                                           q=1),
             time_limit=time_limit,
             )
         nnet_i = scope.nnet_add_layer(nnet_i, rbm)
         nnets.append(nnet_i)
+        X = scope.layer_transform(rbm, X)
 
     # this prior is not what I would do now, but it is what I did then...
     nnet_features = hp.pchoice(
@@ -110,7 +127,6 @@ def dbn_preproc_space(
          (.125, nnets[2]),
          (.125, nnets[3])])
 
-
     sup_nnet = scope.nnet_add_layer(
         nnet_features,
         scope.zero_layer(
@@ -118,7 +134,7 @@ def dbn_preproc_space(
             n_out=scope.getattr(pyll_stubs.train_task, 'n_classes')))
 
 
-    nnet4 = scope.sgd_finetune(
+    nnet4, report = scope.nnet_sgd_finetune(
         sup_nnet,
         pyll_stubs.train_task,
         pyll_stubs.valid_task,
@@ -128,13 +144,16 @@ def dbn_preproc_space(
         batch_size=hp.choice('batch_size', [20, 100]),
         lr=hp.lognormal('lr', np.log(.01), 3.),
         lr_anneal_start=hp.qloguniform(
-            'lr_anneal_start', np.log(100), np.log(10000), q=1),
+            'lr_anneal_start',
+            np.log(100),
+            np.log(10000),
+            q=1),
         l2_penalty=hp.choice('lr_penalty', [
             0,
             hp.lognormal('l2_penalty_nz', np.log(1.0e-6), 2.)]),
         time_limit=time_limit,
         )
 
-    return nnet4
+    return nnet4, report
 
 
