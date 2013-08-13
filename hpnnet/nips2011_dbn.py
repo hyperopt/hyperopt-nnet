@@ -59,21 +59,19 @@ def preproc_space(
 
     """
 
-    X = scope.getattr(pyll_stubs.train_task, 'x')
-    nnet0 = scope.NNet([], n_out=scope.getattr(X, 'shape')[1])
+    train_task_x = scope.getattr(pyll_stubs.train_task, 'x')
+    nnet0 = scope.NNet([], n_out=scope.getattr(train_task_x, 'shape')[1])
     nnet1 = hp.choice('preproc',
         [
             nnet0,                  # -- raw data
             scope.nnet_add_layers(  # -- ZCA of data
                 nnet0,
                 scope.zca_layer(
-                    X,
+                    train_task_x,
                     energy=hp.uniform('pca_energy', .5, 1),
                     eps=1e-14,
                     )),
         ])
-
-    X = scope.nnet_transform(nnet1, X)
 
     param_seed = hp.choice('iseed', [5, 6, 7, 8])
 
@@ -97,15 +95,20 @@ def preproc_space(
                     ('old', hp.lognormal('W_imult_%i' % ii, 0, 1)),
                     ('Glorot',)]),
             )
-        rbm = scope.layer_pretrain_cd(
-            layer,
-            X,
+        nnet_i_raw = scope.nnet_add_layer(nnet_i, layer)
+        # -- repeatedly calculating lower-layers wastes some CPU, but keeps
+        #    memory usage much more stable across jobs (good for cluster)
+        #    and the wasted CPU is not so much overall.
+        nnet_i_pt = scope.nnet_pretrain_top_layer_cd(
+            nnet_i_raw,
+            train_task_x,
             lr=hp.lognormal('cd_lr_%i' % ii, np.log(.01), 2),
-            epochs=hp.qloguniform('cd_epochs_%i' % ii,
-                                  np.log(1),
-                                  np.log(cd_epochs_max),
-                                  q=1),
-            # -- for whatever reason (?), this was fixed
+            seed=hp.randint('cd_seed_%i' % ii, 10),
+            n_epochs=hp.qloguniform('cd_epochs_%i' % ii,
+                                    np.log(1),
+                                    np.log(cd_epochs_max),
+                                    q=1),
+            # -- for whatever reason (?), this was fixed at 100
             batchsize=100,
             sample_v0s=hp.choice('sample_v0s_%i' % ii, [False, True]),
             lr_anneal_start=hp.qloguniform('lr_anneal_%i' % ii,
@@ -114,9 +117,7 @@ def preproc_space(
                                            q=1),
             time_limit=time_limit,
             )
-        nnet_i = scope.nnet_add_layer(nnet_i, rbm)
-        nnets.append(nnet_i)
-        X = scope.layer_transform(rbm, X)
+        nnets.append(nnet_i_pt)
 
     # this prior is not what I would do now, but it is what I did then...
     nnet_features = hp.pchoice(

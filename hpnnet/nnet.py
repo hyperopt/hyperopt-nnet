@@ -11,8 +11,16 @@ import time as time_module
 import numpy as np
 import theano
 import theano.tensor as TT
+try:
+    RandomStreams = theano.sandbox.cuda.CURAND_RandomStreams
+except:
+    RandomStreams = TT.shared_randomstreams.RandomStreams
 
 from hyperopt.pyll import scope
+
+class DivergenceError(Exception):
+    """An iterative numerical algorithm diverged (step size too large).
+    """
 
 # TODO: move this to hyperopt.pyll
 @scope.define
@@ -110,6 +118,13 @@ class ClipLayer(Layer):
         tmp = np.dot(X, self.W) + self.b
         return np.clip(tmp, 0, 1)
 
+    def theano_compute(self, X, W, b):
+        tmp = theano.dot(X, self.W) + self.b
+        rval = TT.clip(tmp, 0, 1)
+        assert rval.dtype == X.dtype
+        return rval
+
+
 
 @scope.define
 def layer_transform(layer, X):
@@ -143,7 +158,7 @@ def pca_layer(X, energy, eps):
     W = eigvecs / np.sqrt(eigvals + eps)
     b = -np.dot(eigmean, W)
     print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
-    return AffineLayer(W, b)
+    return AffineLayer(W.astype(X.dtype), b.astype(X.dtype))
 
 @scope.define
 def zca_layer(X, energy, eps):
@@ -157,8 +172,8 @@ def zca_layer(X, energy, eps):
     #b = -np.dot(eigmean, W)
     print('ZCA kept %i of %i components' % (W.shape[1], X.shape[1]))
     # TODO: verify that this is actually the right algorithm
-    l0 = AffineLayer(W, 0)
-    l1 = ClipLayer(W.T, 0)
+    l0 = AffineLayer(W.astype(X.dtype), np.asarray(0, dtype=X.dtype))
+    l1 = ClipLayer(W.T.copy().astype(X.dtype), np.asarray(0, dtype=X.dtype))
     return [l0, l1]
 
 @scope.define
@@ -170,17 +185,96 @@ def column_normalize_layer(X, std_thresh):
         b=-mean)
 
 @scope.define
-def layer_pretrain_cd(layer,
-                      X, 
-                      lr,
-                      epochs,
-                      batchsize,
-                      sample_v0s, 
-                      lr_anneal_start,
-                      time_limit=None):
-    import sys
-    print >> sys.stderr, "ERROR: CD Not Implemented"
-    return layer
+def nnet_pretrain_top_layer_cd(nnet,
+                               X, 
+                               lr,
+                               n_epochs,
+                               seed,
+                               batchsize,
+                               sample_v0s, 
+                               lr_anneal_start,
+                               time_limit=None):
+    """
+    Return a new pre-trained version of Layer, trained by contrastive
+    divergence.  This is not stochastic maximum-likelihood or persistive CD,
+    this is the so-called "CD-1" algorithm.
+    """
+    dtype = str(X.dtype)
+    s_rng = RandomStreams(int(seed))
+    s_features = theano.shared(X, borrow=True)
+    s_batchsize = TT.as_tensor_variable(batchsize)
+    s_idx = TT.lscalar()
+    s_lr = theano.shared(np.asarray(lr, dtype=X.dtype))
+    if not nnet.layers:
+        raise ValueError('nnet_pretrain_top_layer_cd:'
+                         ' at least one layer required')
+    v0m = s_features[s_idx * s_batchsize: (s_idx + 1) * s_batchsize]
+    # -- filter features through lowermost layers
+    for layer in nnet.layers[:-1]:
+        s_W = theano.shared(layer.W)
+        s_b = theano.shared(layer.b)
+        tmp = layer.theano_compute(v0m, s_W, s_b)
+        assert tmp.dtype == v0m.dtype, layer
+        v0m = tmp
+
+    # -- start CD on top layer
+    if not isinstance(nnet.layers[-1], LogisticLayer):
+        raise TypeError('CD pretraining only works for'
+                        ' nnets with Logistic top layer')
+    n_in = nnet.layers[-1].n_in
+    n_out = nnet.layers[-1].n_out
+    print('rbm training n_in=%i n_out=%i batchsize=%i' % (
+        n_in, n_out, batchsize))
+    s_W = theano.shared(nnet.layers[-1].W)
+    s_b = theano.shared(nnet.layers[-1].b)
+    s_a = theano.shared(np.zeros(n_in, dtype=s_b.dtype))
+    if str(X.dtype) != str(s_W.dtype):
+        raise TypeError('data and W have different dtypes')
+    if sample_v0s:
+        v0s = TT.cast(
+                v0m > s_rng.uniform(
+                    size=(batchsize, nnet.layers[-1].n_in)),
+                dtype)
+    else:
+        v0s = v0m
+
+    h0m = TT.nnet.sigmoid(TT.dot(v0s, s_W) + s_b)
+    h0s = TT.cast(s_rng.uniform(size=(batchsize, n_out)) < h0m, dtype)
+    v1m = TT.nnet.sigmoid(TT.dot(h0s, s_W.T) + s_a)
+    v1s = TT.cast(s_rng.uniform(size=(batchsize, n_in)) < v1m, dtype)
+    h1m = TT.nnet.sigmoid(TT.dot(v1s, s_W) + s_b)
+
+    # -- compile CD1 update function
+    cd1_fn = theano.function([s_idx],
+            [abs(v0m - v1m).mean()],
+            updates=[
+                (s_W, s_W + s_lr * (
+                    TT.dot(v0s.T, h0m) - TT.dot(v1s.T, h1m))),
+                (s_a, s_a + s_lr * (
+                    (v0s - v1s).sum(axis=0))),
+                (s_b, s_b + s_lr * (
+                    (h0m - h1m).sum(axis=0))),
+                ],
+            )
+    n_batches_per_epoch = len(X) / batchsize
+    if len(X) > (batchsize * n_batches_per_epoch):
+        n_batches_per_epoch += 1
+    for epoch in xrange(int(n_epochs)):
+        if time_limit and time_module.time() > time_limit:
+            break
+        e_lr = lr * min(1, (float(lr_anneal_start) / (epoch + 1)))
+        s_lr.set_value(e_lr)
+
+        costs = [cd1_fn(bi) for bi in xrange(n_batches_per_epoch)]
+        if not epoch % 10:
+            print('CD1 epoch:%i  avg L1: %f'% (epoch, np.mean(costs)))
+        if not np.isfinite(np.mean(costs)):
+            raise DivergenceError('CD went crazy')
+
+    new_top_layer = LogisticLayer(W=s_W.get_value(borrow=True),
+                                  b=s_b.get_value(borrow=True))
+    new_nnet = NNet(nnet.layers[:-1] + [new_top_layer])
+    return new_nnet
 
 
 @scope.define

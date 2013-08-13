@@ -84,7 +84,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000,
             n_in=scope.getattr(nnet2, 'n_out'),
             n_out=scope.getattr(pyll_stubs.train_task, 'n_classes')))
 
-    nnet4 = scope.sgd_finetune(
+    nnet4 = scope.nnet_sgd_finetune(
         nnet3,
         pyll_stubs.train_task,
         pyll_stubs.valid_task,
