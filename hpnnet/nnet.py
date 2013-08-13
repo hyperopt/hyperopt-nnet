@@ -117,8 +117,19 @@ def layer_transform(layer, X):
 
 
 @scope.define
+def nnet_transform(nnet, X):
+    for layer in nnet.layers:
+        X = layer(X)
+    return X
+
+
+@scope.define
 def nnet_add_layer(nnet, layer):
     return NNet(nnet.layers + [layer])
+
+@scope.define
+def nnet_add_layers(nnet, layers):
+    return NNet(nnet.layers + list(layers))
 
 
 @scope.define
@@ -136,10 +147,11 @@ def pca_layer(X, energy, eps):
 
 @scope.define
 def zca_layer(X, energy, eps):
+    import pylearn_pca
     (eigvals,eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
-            X=X_train,
-            max_energy_fraction=config['preprocessing']['energy'])
-    eigmean = X_train[0] - centered_trainset[0]
+            X=X,
+            max_energy_fraction=energy)
+    #eigmean = X[0] - centered_trainset[0]
 
     W = eigvecs / np.sqrt(eigvals + eps)
     #b = -np.dot(eigmean, W)

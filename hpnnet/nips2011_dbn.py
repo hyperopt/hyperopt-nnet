@@ -63,10 +63,9 @@ def preproc_space(
     nnet0 = scope.NNet([], n_out=scope.getattr(X, 'shape')[1])
     nnet1 = hp.choice('preproc',
         [
-            nnet0,                 # -- raw data
-            scope.nnet_add_layer(  # -- ZCA of data
+            nnet0,                  # -- raw data
+            scope.nnet_add_layers(  # -- ZCA of data
                 nnet0,
-                # TODO: accept two return layers here
                 scope.zca_layer(
                     X,
                     energy=hp.uniform('pca_energy', .5, 1),
@@ -74,9 +73,7 @@ def preproc_space(
                     )),
         ])
 
-    # TODO: make layer_transform work on whole nnet??
-    # TODO: make this work when nnet1 is actually null nnet0 model
-    X = scope.layer_transform(nnet1, X)
+    X = scope.nnet_transform(nnet1, X)
 
     param_seed = hp.choice('iseed', [5, 6, 7, 8])
 
@@ -93,10 +90,12 @@ def preproc_space(
                                  np.log(2**7),
                                  np.log(2**12),
                                  q=16),
-            W_init_dist=hp.choice('W_idist_%i' % ii, ['uniform', 'normal']),
-            W_init_algo=hp.choice('W_ialgo_%i' % ii, ['old', 'Xavier']),
-            # -- multiplier should have been nested to go with algo=='old'
-            W_init_algo_old_multiplier=hp.lognormal('W_imult_%i' % ii, 0, 1),
+            dist=hp.choice('W_idist_%i' % ii, ['uniform', 'normal']),
+            scale_heuristic=hp.choice(
+                'W_ialgo_%i' % ii, [
+                    # -- TODO: check range on this, doesn't match nnet
+                    ('old', hp.lognormal('W_imult_%i' % ii, 0, 1)),
+                    ('Glorot',)]),
             )
         rbm = scope.layer_pretrain_cd(
             layer,
