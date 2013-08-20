@@ -320,9 +320,6 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
     max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty,
     time_limit=None):
 
-    import sys
-    print >> sys.stderr, "TODO: implement time_limit"
-
     layers = nnet.layers
 
     fixed_layers = [l for l in nnet.layers if l in fixed_nnet.layers]
@@ -439,6 +436,8 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
 
         if epoch > max(min_epochs, 2 * report['best_epoch']):
             break
+        if time_limit is not None and time_module.time() > time_limit:
+            break
         train_rate = float(np.mean([train_fn(i, e_lr) for i in
             range(n_train_batches)]))
         if not np.isfinite(train_rate):
@@ -455,6 +454,7 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
                 tuned.__class__(
                     W.get_value(),
                     b.get_value()))
+        print 'nnet_sgd_finetune: ', report
         return best_nnet, report
     else:
         report['status'] = 'fail'

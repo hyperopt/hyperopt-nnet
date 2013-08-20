@@ -24,7 +24,6 @@ import numpy as np
 
 from hyperopt.pyll import scope
 from hyperopt import hp
-from hyperopt.fmin import fmin_pass_expr_memo_ctrl
 
 import pyll_stubs
 import nnet  # -- load scope with nnet symbols
@@ -91,7 +90,6 @@ def preproc_space(
             dist=hp.choice('W_idist_%i' % ii, ['uniform', 'normal']),
             scale_heuristic=hp.choice(
                 'W_ialgo_%i' % ii, [
-                    # -- TODO: check range on this, doesn't match nnet
                     ('old', hp.lognormal('W_imult_%i' % ii, 0, 1)),
                     ('Glorot',)]),
             )
