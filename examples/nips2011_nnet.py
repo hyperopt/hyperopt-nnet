@@ -24,11 +24,9 @@ from functools import partial
 import sys
 
 from IPython.parallel import Client
-from hyperopt import tpe, rand
+from hyperopt import tpe
 from hyperopt.ipy import IPythonTrials
-from hyperopt.fmin import fmin_pass_expr_memo_ctrl
 from hpnnet.skdata_learning_algo import eval_fn
-from hpnnet.skdata_learning_algo import PyllLearningAlgo
 from hpnnet.nips2011 import nnet1_preproc_space
 
 def get_iptrials(filename):
@@ -53,10 +51,13 @@ def main_rectangles(filename='iptrials_rectangles.pkl'):
 
     for max_evals in [10, 25, 50]:
         iptrials.fmin(
-                fn=rectangles_eval_fn,
-                space=nnet1_preproc_space(),
-                algo=tpe.suggest,
-                max_evals=max_evals, verbose=1)
+            fn=rectangles_eval_fn,
+            space=nnet1_preproc_space(),
+            algo=tpe.suggest,
+            max_evals=max_evals,
+            verbose=1,
+            pass_expr_memo_ctrl=True,
+            )
         iptrials.wait()
         iptrials.refresh()
         ofile = open(filename, 'w')
@@ -73,10 +74,13 @@ def main_MRBI(filename='iptrials_MRBI.pkl'):
 
     for max_evals in range(20, 100, 200):
         iptrials.fmin(
-                fn=dataset_eval_fn,
-                space=nnet1_preproc_space(),
-                algo=tpe.suggest,
-                max_evals=max_evals, verbose=1)
+            fn=dataset_eval_fn,
+            space=nnet1_preproc_space(),
+            algo=tpe.suggest,
+            max_evals=max_evals,
+            verbose=1,
+            pass_expr_memo_ctrl=True,
+            )
         iptrials.wait()
         iptrials.refresh()
         ofile = open(filename, 'w')
@@ -93,10 +97,13 @@ def main_convex(filename='iptrials_convex.pkl'):
 
     for max_evals in range(10, 50, 10):
         iptrials.fmin(
-                fn=dataset_eval_fn,
-                space=nnet1_preproc_space(),
-                algo=tpe.suggest,
-                max_evals=max_evals, verbose=1)
+            fn=dataset_eval_fn,
+            space=nnet1_preproc_space(),
+            algo=tpe.suggest,
+            max_evals=max_evals,
+            verbose=1,
+            pass_expr_memo_ctrl=True,
+            )
         iptrials.wait()
         iptrials.refresh()
         ofile = open(filename, 'w')
