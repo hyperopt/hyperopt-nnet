@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import cPickle
 import sys
 from hyperopt.plotting import main_plot_history
