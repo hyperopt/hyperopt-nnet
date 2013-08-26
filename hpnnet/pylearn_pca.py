@@ -15,15 +15,20 @@ Elements of this implementation have been borrowed from the MDP toolkit:
 import numpy
 import scipy.linalg
 
-if 0:
-    #TODO : put this trick into Theano as an Op
-    #       inplace implementation of diag() Op.
-    def diag_as_vector(x):
-        if x.ndim != 2:
-            raise TypeError('this diagonal is implemented only for matrices', x)
-        rval = x[0,:min(*x.shape)]
-        rval.strides = (rval.strides[0] + x.strides[0],)
-        return rval
+try:
+    import theano
+    dx, dy = theano.tensor.dmatrix(), theano.tensor.dmatrix()
+    ddot = theano.function([dx, dy], theano.dot(dx, dy))
+    fx, fy = theano.tensor.fmatrix(), theano.tensor.fmatrix()
+    fdot = theano.function([fx, fy], theano.dot(fx, fy))
+    def dot(a, b):
+        if '32' in str(a.dtype):
+            return fdot(a, b)
+        else:
+            return ddot(a, b)
+    numpy.dot = dot
+except ImportError:
+    pass
 
 
 def pca_from_cov(cov, lower=0, max_components=None, max_energy_fraction=None):
