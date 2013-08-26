@@ -92,6 +92,14 @@ class AffineLayer(Layer):
         return TT.dot(X, W) + b
 
 
+class AffineLayerPre(Layer):
+    def __call__(self, X):
+        return np.dot(X + self.b, self.W)
+
+    def theano_compute(self, X, W, b):
+        return TT.dot(X + b, W)
+
+
 class AffineElemwiseLayer(Layer):
     def __call__(self, X):
         return X * self.W + self.b
@@ -101,7 +109,9 @@ class AffineElemwiseLayer(Layer):
 
     @property
     def n_in(self):
-        return self.W.shape[1]
+        assert self.W.shape[0] == 1
+        return (self.W + self.b).shape[1]
+
 
 class LogisticLayer(Layer):
     def __call__(self, X):
@@ -159,28 +169,37 @@ def pca_layer(X, energy, eps):
     (eigvals, eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
             X=X,
             max_energy_fraction=energy)
-    eigmean = X[0] - centered_trainset[0]
+    centering_offset = centered_trainset[0] - X[0]
 
     W = eigvecs / np.sqrt(eigvals + eps)
-    b = -np.dot(eigmean, W)
     print('PCA kept %i of %i components' % (W.shape[1], X.shape[1]))
-    return AffineLayer(W.astype(X.dtype), b.astype(X.dtype))
+    return AffineLayerPre(
+        W.astype(X.dtype),
+        centering_offset.astype(X.dtype))
+
 
 @scope.define
 def zca_layer(X, energy, eps):
+    """
+    Return a pair of layers whose output when filtering X will be X's ZCA.
+
+    energy - retain at least this much energy with the principle components
+    eps - add this to the eigenvalues when computing PCA responses to prevent
+          division-by-zero and suppress weak components in the PCA
+          representation.
+    """
     import pylearn_pca
-    (eigvals,eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
+    (eigvals, eigvecs), centered_trainset = pylearn_pca.pca_from_examples(
             X=X,
             max_energy_fraction=energy)
-    #eigmean = X[0] - centered_trainset[0]
 
+    centering_offset = centered_trainset[0] - X[0]
     W = eigvecs / np.sqrt(eigvals + eps)
-    #b = -np.dot(eigmean, W)
     print('ZCA kept %i of %i components' % (W.shape[1], X.shape[1]))
-    # TODO: verify that this is actually the right algorithm
-    l0 = AffineLayer(W.astype(X.dtype), np.asarray(0, dtype=X.dtype))
-    l1 = ClipLayer(W.T.copy().astype(X.dtype), np.asarray(0, dtype=X.dtype))
+    l0 = AffineLayerPre(W.astype(X.dtype), centering_offset.astype(X.dtype))
+    l1 = ClipLayer(eigvecs.T.copy().astype(X.dtype), np.asarray(0, dtype=X.dtype))
     return [l0, l1]
+
 
 @scope.define
 def column_normalize_layer(X, std_thresh):
@@ -189,6 +208,7 @@ def column_normalize_layer(X, std_thresh):
     return AffineElemwiseLayer(
         W=1. / (std + std_thresh),
         b=-mean)
+
 
 @scope.define
 def nnet_pretrain_top_layer_cd(nnet,
