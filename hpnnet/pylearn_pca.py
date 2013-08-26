@@ -170,7 +170,7 @@ def zca_whiten((eigvals, eigvecs), centered_X):
 
     See also fft_whiten.py
     """
-    pca_of_X = pca_whiten((eigvals,eigvecs), centered_X)
+    pca_of_X = pca_whiten((eigvals, eigvecs), centered_X)
     return numpy.dot(pca_of_X, eigvecs.T)
 
 

@@ -305,7 +305,7 @@ def nnet_pretrain_top_layer_cd(nnet,
 
 @scope.define
 def random_logistic_layer(n_in, n_out, dist,
-    scale_heuristic, seed):
+    scale_heuristic, seed, dtype='float32'):
 
     rng = np.random.RandomState(seed)
     if dist == 'uniform':
@@ -321,7 +321,7 @@ def random_logistic_layer(n_in, n_out, dist,
     # easier to isolate the effect of random initialization from the other
     # hyperparameters (otherwise changing n_out would be pretty much
     # equivalent to re-seeding).
-    W = WT.T.astype('float32')
+    W = WT.T.astype(dtype)
 
     if scale_heuristic[0] == 'old':
         W *= scale_heuristic[1] / np.sqrt(n_in)
@@ -330,21 +330,21 @@ def random_logistic_layer(n_in, n_out, dist,
     else:
         raise ValueError(scale_heuristic)
 
-    b = np.zeros(n_out, dtype='float32')
+    b = np.zeros(n_out, dtype=dtype)
     return LogisticLayer(W, b)
 
 
 @scope.define
-def zero_layer(n_in, n_out):
-    W = np.zeros((n_in, n_out), dtype='float32')
-    b = np.zeros(n_out, dtype='float32')
+def zero_layer(n_in, n_out, dtype='float32'):
+    W = np.zeros((n_in, n_out), dtype=dtype)
+    b = np.zeros(n_out, dtype=dtype)
     return LogisticLayer(W, b)
 
 
 @scope.define_info(o_len=2)
 def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
     max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty,
-    time_limit=None):
+    time_limit=None, dtype='float32'):
 
     layers = nnet.layers
 
@@ -379,8 +379,8 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
         train_x = layer(train_x)
         valid_x = layer(valid_x)
 
-    train_x = train_x.astype('float32')
-    valid_x = valid_x.astype('float32')
+    train_x = train_x.astype(dtype)
+    valid_x = valid_x.astype(dtype)
 
     shared_train_x = theano.shared(train_x, borrow=True)
     shared_valid_x = theano.shared(valid_x, borrow=True)
@@ -388,7 +388,7 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
     shared_valid_y = theano.shared(valid_y, borrow=True)
 
     batch_idx = TT.iscalar()
-    s_lr = TT.fscalar()
+    s_lr = TT.scalar(dtype=dtype)
 
     batch_train_x = shared_train_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
     batch_valid_x = shared_valid_x[batch_idx * batch_size:(batch_idx + 1) * batch_size]
