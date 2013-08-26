@@ -6,6 +6,8 @@ There is potentially a lot of approaches to PCA, this file may get there eventua
 Elements of this implementation have been borrowed from the MDP toolkit:
     mdp/nodes/pca_nodes.py
 """
+__author__ = "James Bergstra"
+__license__ = "BSD-3"
 
 #TODO: estimate number of principle components by cross-validation (early stopping)
 
