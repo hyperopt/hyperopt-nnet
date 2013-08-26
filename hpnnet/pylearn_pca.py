@@ -125,6 +125,7 @@ def pca_whiten((eigvals, eigvecs), centered_X,eps=1e-14):
     pca_of_X /= numpy.sqrt(eigvals+eps)
     return pca_of_X
 
+
 def pca_whiten_inverse((eigvals, eigvecs), whitened_X, eps=1e-14):
     """
     Return an approximate inverse of the `pca_whiten` transform.
@@ -133,6 +134,7 @@ def pca_whiten_inverse((eigvals, eigvecs), whitened_X, eps=1e-14):
     of the data.
     """
     return numpy.dot(whitened_X * (numpy.sqrt(eigvals+eps)), eigvecs.T)
+
 
 def pca_whiten2(pca_from_examples_rval, eps=1e-14):
     """
@@ -159,6 +161,7 @@ def pca_whiten2(pca_from_examples_rval, eps=1e-14):
     pca_of_X = numpy.dot(centered_X, eigvecs)
     pca_of_X /= numpy.sqrt(eigvals+eps)
     return ((eigvals, eigvecs), pca_of_X)
+
 
 def zca_whiten((eigvals, eigvecs), centered_X):
     """Return the PCA of X but rotated back into the original vector space.

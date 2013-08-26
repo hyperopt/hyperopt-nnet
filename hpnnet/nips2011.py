@@ -88,7 +88,7 @@ def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000,
         nnet3,
         pyll_stubs.train_task,
         pyll_stubs.valid_task,
-        fixed_nnet=nnet1,
+        fixed_nnet=nnet1,   # -- don't fine-tune this first part of nnet3
         max_epochs=sup_max_epochs,
         min_epochs=sup_min_epochs,
         batch_size=hp.choice('batch_size', [20, 100]),

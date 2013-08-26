@@ -12,15 +12,21 @@ import numpy as np
 import theano
 import theano.tensor as TT
 try:
-    RandomStreams = theano.sandbox.cuda.CURAND_RandomStreams
-except:
-    RandomStreams = TT.shared_randomstreams.RandomStreams
+    import theano.sandbox.cuda.rng_curand
+    RandomStreams = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams
+except ImportError:
+    try:
+        import theano.sandbox.rng_mrg
+        RandomStreams = theano.sandbox.rng_mrg.MRG_RandomStreams
+    except ImportError:
+        RandomStreams = TT.shared_randomstreams.RandomStreams
 
 from hyperopt.pyll import scope
 
 class DivergenceError(Exception):
     """An iterative numerical algorithm diverged (step size too large).
     """
+
 
 # TODO: move this to hyperopt.pyll
 @scope.define
