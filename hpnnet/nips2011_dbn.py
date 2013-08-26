@@ -32,9 +32,7 @@ import nnet  # -- load scope with nnet symbols
 def preproc_space(
     sup_min_epochs=300,
     sup_max_epochs=4000,
-    # the original timeout was 60 minutes, but computers are faster now
-    # so ballparking .... 20 minutes
-    max_seconds=20 * 60,
+    max_seconds=60 * 60,
     ):
     """
     Return a hyperopt-compatible pyll expression for a trained neural network.

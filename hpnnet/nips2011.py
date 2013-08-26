@@ -31,7 +31,7 @@ import nnet  # -- load scope with nnet symbols
 
 
 def nnet1_preproc_space(sup_min_epochs=300, sup_max_epochs=4000,
-                       max_seconds=10 * 60):
+                       max_seconds=60 * 60):
     """
     Return a hyperopt-compatible pyll expression for a trained neural network.
 
