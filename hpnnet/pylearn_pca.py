@@ -32,6 +32,11 @@ try:
 except ImportError:
     pass
 
+import os
+import psutil
+p = psutil.Process(os.getpid())
+print 'CPU AFFINITY', p.get_cpu_affinity()
+assert len(p.get_cpu_affinity()) == 8, p.get_cpu_affinity()
 
 def pca_from_cov(cov, lower=0, max_components=None, max_energy_fraction=None):
     """Return (eigvals, eigvecs) of data with covariance `cov`.
