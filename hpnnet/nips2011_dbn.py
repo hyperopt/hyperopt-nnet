@@ -31,7 +31,7 @@ import nnet  # -- load scope with nnet symbols
 
 def preproc_space(
     sup_min_epochs=300,
-    sup_max_epochs=4000,
+    sup_max_epochs=2000,
     max_seconds=60 * 60,
     ):
     """
@@ -77,7 +77,7 @@ def preproc_space(
     nnets = [nnet1]
     nnet_i = nnet1
     for ii, cd_epochs_max in enumerate([3000, 2000, 1500]):
-        layer = scope.random_logistic_layer(
+        layer = scope.random_sigmoid_layer(
             # -- hack to get different seeds for dif't layers
             seed=param_seed + cd_epochs_max,
             n_in=scope.getattr(nnet_i, 'n_out'),
@@ -90,6 +90,7 @@ def preproc_space(
                 'W_ialgo_%i' % ii, [
                     ('old', hp.lognormal('W_imult_%i' % ii, 0, 1)),
                     ('Glorot',)]),
+            squash='logistic',
             )
         nnet_i_raw = scope.nnet_add_layer(nnet_i, layer)
         # -- repeatedly calculating lower-layers wastes some CPU, but keeps
@@ -125,12 +126,12 @@ def preproc_space(
 
     sup_nnet = scope.nnet_add_layer(
         nnet_features,
-        scope.zero_layer(
+        scope.zero_softmax_layer(
             n_in=scope.getattr(nnet_features, 'n_out'),
             n_out=scope.getattr(pyll_stubs.train_task, 'n_classes')))
 
 
-    nnet4, report = scope.nnet_sgd_finetune(
+    nnet4, report = scope.nnet_sgd_finetune_classifier(
         sup_nnet,
         pyll_stubs.train_task,
         pyll_stubs.valid_task,
@@ -144,7 +145,7 @@ def preproc_space(
             np.log(100),
             np.log(10000),
             q=1),
-        l2_penalty=hp.choice('lr_penalty', [
+        l2_penalty=hp.choice('l2_penalty', [
             0,
             hp.lognormal('l2_penalty_nz', np.log(1.0e-6), 2.)]),
         time_limit=time_limit,

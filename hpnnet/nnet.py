@@ -23,6 +23,17 @@ except ImportError:
 
 from hyperopt.pyll import scope
 
+
+_x = theano.tensor.dmatrix()
+_v = theano.tensor.dmatrix()
+softmax = theano.function([_x], theano.tensor.nnet.softmax(_x))
+
+dot_mm = theano.function([_x, _v], theano.tensor.dot(_x, _v))
+
+def np_dot(a, b):
+    return dot_mm(a, b)
+
+
 class DivergenceError(Exception):
     """An iterative numerical algorithm diverged (step size too large).
     """
@@ -66,6 +77,7 @@ class NNet(object):
             t1 = time_module.time()
             if t1 - t0 > .1:
                 print 'WARNING: predicting single chunk took', (t1 - t0)
+                print 'ETA = %s' % ((len(X) - i) / 256. *  (t1 - t0))
         assert len(preds) == len(X), (len(preds), len(X))
         return preds
 
@@ -86,7 +98,7 @@ class Layer(object):
 
 class AffineLayer(Layer):
     def __call__(self, X):
-        return np.dot(X, self.W) + self.b
+        return np_dot(X, self.W) + self.b
 
     def theano_compute(self, X, W, b):
         return TT.dot(X, W) + b
@@ -94,7 +106,7 @@ class AffineLayer(Layer):
 
 class AffineLayerPre(Layer):
     def __call__(self, X):
-        return np.dot(X + self.b, self.W)
+        return np_dot(X + self.b, self.W)
 
     def theano_compute(self, X, W, b):
         return TT.dot(X + b, W)
@@ -115,23 +127,31 @@ class AffineElemwiseLayer(Layer):
 
 class LogisticLayer(Layer):
     def __call__(self, X):
-        return 1. / (1. + np.exp(-np.dot(X, self.W) - self.b))
+        return 1. / (1. + np.exp(-np_dot(X, self.W) - self.b))
 
     def theano_compute(self, X, W, b):
         return 1. / (1. + TT.exp(-TT.dot(X, W) - b))
 
 
-class TanhLayer(Layer):
+class SoftmaxLayer(Layer):
     def __call__(self, X):
-        return np.tanh(np.dot(X, self.W) + self.b)
+        return softmax(np_dot(X, self.W) + self.b)
 
     def theano_compute(self, X, W, b):
-        return TT.tanh(X * W) + b
+        return TT.nnet.softmax(TT.dot(X, W) + b)
+
+
+class TanhLayer(Layer):
+    def __call__(self, X):
+        return np.tanh(np_dot(X, self.W) + self.b)
+
+    def theano_compute(self, X, W, b):
+        return TT.tanh(TT.dot(X, W) + b)
 
 
 class ClipLayer(Layer):
     def __call__(self, X):
-        tmp = np.dot(X, self.W) + self.b
+        tmp = np_dot(X, self.W) + self.b
         return np.clip(tmp, 0, 1)
 
     def theano_compute(self, X, W, b):
@@ -304,12 +324,13 @@ def nnet_pretrain_top_layer_cd(nnet,
 
 
 @scope.define
-def random_logistic_layer(n_in, n_out, dist,
-    scale_heuristic, seed, dtype='float32'):
+def random_sigmoid_layer(n_in, n_out, dist,
+    scale_heuristic, seed, squash,
+    dtype='float32'):
 
     rng = np.random.RandomState(seed)
     if dist == 'uniform':
-        WT = rng.uniform(low=-1, high=1, size=(n_out, n_in))
+        WT = rng.rand(n_out, n_in) * 2 - 1
     elif dist == 'normal':
         WT = rng.randn(n_out, n_in)
     else:
@@ -331,18 +352,23 @@ def random_logistic_layer(n_in, n_out, dist,
         raise ValueError(scale_heuristic)
 
     b = np.zeros(n_out, dtype=dtype)
-    return LogisticLayer(W, b)
+    if squash == 'logistic':
+        return LogisticLayer(W, b)
+    elif squash == 'tanh':
+        return TanhLayer(W, b)
+    else:
+        raise NotImplementedError('squashing function', squash)
 
 
 @scope.define
-def zero_layer(n_in, n_out, dtype='float32'):
+def zero_softmax_layer(n_in, n_out, dtype='float32'):
     W = np.zeros((n_in, n_out), dtype=dtype)
     b = np.zeros(n_out, dtype=dtype)
-    return LogisticLayer(W, b)
+    return SoftmaxLayer(W, b)
 
 
 @scope.define_info(o_len=2)
-def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
+def nnet_sgd_finetune_classifier(nnet, train_task, valid_task, fixed_nnet,
     max_epochs, min_epochs, batch_size, lr, lr_anneal_start, l2_penalty,
     time_limit=None, dtype='float32'):
 
@@ -409,8 +435,11 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
         Ws.append(s_W)
         bs.append(s_b)
         l2_cost = l2_cost + (s_W ** 2).sum()
+        #batch_train_x = theano.printing.Print('x')(batch_train_x)
 
-    train_probs = TT.nnet.softmax(batch_train_x)
+    # -- the topmost layer is the classifier, so at this point batch_train_x
+    #    represents the softmax classifier output.
+    train_probs = batch_train_x
     train_loss = TT.mean(
         TT.nnet.categorical_crossentropy(train_probs, batch_train_y))
     regularized_loss = train_loss + l2_penalty * l2_cost
@@ -422,6 +451,8 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
         updates=updates,
         allow_input_downcast=True)
 
+    # -- the topmost layer is the classifier, so at this point batch_valid_x
+    #    represents the softmax classifier output.
     valid_err_rate = TT.mean(
             TT.neq(batch_valid_y, TT.argmax(batch_valid_x, axis=1)))
     valid_err_rate_fn = theano.function([batch_idx], valid_err_rate)
@@ -429,46 +460,53 @@ def nnet_sgd_finetune(nnet, train_task, valid_task, fixed_nnet,
     report = {}
     report['best_epoch'] = -1
     report['best_epoch_valid'] = 1.0
-    report['best_epoch_train'] = 1.0
+    report['best_epoch_avg_train_reg_loss'] = 1.0
     report['best_epoch_test'] = 1.0
     report['status'] = 'ok'
-    valid_rate=float('inf')
-    test_rate=-float('inf')
-    train_rate=-float('inf')
+    valid_err_rate = float('inf')
+    test_err_rate = float('inf')
+    avg_regularized_loss = float('inf')
 
     n_train_batches = len(train_x) // batch_size
     n_valid_batches = len(valid_x) // batch_size
 
     for epoch in xrange(max_epochs):
-        valid_rate = float(np.mean([valid_err_rate_fn(i)
+        valid_err_rate = float(np.mean([valid_err_rate_fn(i)
             for i in range(n_valid_batches)]))
-        valid_rate_std_thresh = 0.5 * np.sqrt(valid_rate *
-                (1 - valid_rate) / (n_valid_batches * batch_size))
+        valid_err_rate_std_thresh = 0.5 * np.sqrt(valid_err_rate *
+                (1 - valid_err_rate) / (n_valid_batches * batch_size))
 
-        if valid_rate < (report['best_epoch_valid'] - valid_rate_std_thresh):
+        if valid_err_rate < (
+                report['best_epoch_valid'] - valid_err_rate_std_thresh):
             report['best_epoch'] = epoch
-            report['best_epoch_test'] = test_rate
-            report['best_epoch_valid'] = valid_rate
-            report['best_epoch_train'] = train_rate
+            report['best_epoch_test'] = test_err_rate
+            report['best_epoch_valid'] = valid_err_rate
+            report['best_epoch_avg_train_reg_loss'] = avg_regularized_loss
             best_params = copy.deepcopy(params)
 
         e_lr = lr
         e_lr *= min(1, lr_anneal_start / float(epoch + 1))
 
-        print('Epoch=%i best epoch %i valid %f test %f best_epoch_train %f prev_train %f'%(
-            epoch, report['best_epoch'], report['best_epoch_valid'],
+        print('Epoch=%i best epoch %i valid %f test %f '
+                ' best_train %f cur_train %f lr %f' % (
+            epoch, report['best_epoch'],
+            report['best_epoch_valid'],
             report['best_epoch_test'],
-            report['best_epoch_train'], train_rate))
+            report['best_epoch_avg_train_reg_loss'],
+            avg_regularized_loss,
+            e_lr))
 
         if epoch > max(min_epochs, 2 * report['best_epoch']):
             break
         if time_limit is not None and time_module.time() > time_limit:
             break
-        train_rate = float(np.mean([train_fn(i, e_lr) for i in
+        # -- loop comprehension does one epoch of training
+        avg_regularized_loss = float(np.mean([train_fn(i, e_lr) for i in
             range(n_train_batches)]))
-        if not np.isfinite(train_rate):
+        if not np.isfinite(avg_regularized_loss):
             report['status'] = 'fail'
-            report['status_info'] = 'train_rate %f' % train_rate
+            report['status_info'] = ('avg_regularized_loss %f' %
+                avg_regularized_loss)
             return None, report
 
     if report['best_epoch'] >= 0:
