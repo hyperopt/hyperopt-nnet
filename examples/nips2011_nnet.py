@@ -25,6 +25,7 @@ import sys
 
 from IPython.parallel import Client
 from hyperopt import tpe
+from hyperopt import rand
 from hyperopt.ipy import IPythonTrials
 from hpnnet.skdata_learning_algo import eval_fn
 from hpnnet.nips2011 import nnet1_preproc_space
@@ -53,7 +54,7 @@ def main_rectangles(filename='iptrials_rectangles.pkl'):
         iptrials.fmin(
             fn=rectangles_eval_fn,
             space=nnet1_preproc_space(),
-            algo=tpe.suggest,
+            algo=rand.suggest,
             max_evals=max_evals,
             verbose=1,
             pass_expr_memo_ctrl=True,
