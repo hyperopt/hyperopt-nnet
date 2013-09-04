@@ -14,7 +14,7 @@ __license__ = "BSD-3"
 #TODO: include the original feature means in the `pca` tuple object so that the full transform
 # can be saved, applied to new datasets, and approximately inverted.
 
-import numpy
+import numpy as np
 import scipy.linalg
 
 try:
@@ -23,25 +23,24 @@ try:
     ddot = theano.function([dx, dy], theano.dot(dx, dy))
     fx, fy = theano.tensor.fmatrix(), theano.tensor.fmatrix()
     fdot = theano.function([fx, fy], theano.dot(fx, fy))
-    def dot(a, b):
+    def np_dot(a, b):
         if '32' in str(a.dtype):
             return fdot(a, b)
         else:
             return ddot(a, b)
-    numpy.dot = dot
 except ImportError:
     pass
 
 def pca_from_cov(cov, lower=0, max_components=None, max_energy_fraction=None):
     """Return (eigvals, eigvecs) of data with covariance `cov`.
 
-    The returned eigvals will be a numpy ndarray vector.
-    The returned eigvecs will be a numpy ndarray matrix whose *cols* are the eigenvectors.
+    The returned eigvals will be a np ndarray vector.
+    The returned eigvecs will be a np ndarray matrix whose *cols* are the eigenvectors.
 
     This is recommended for retrieving many components from high-dimensional data.
 
     :param cov: data covariance matrix
-    :type cov: a numpy ndarray 
+    :type cov: a np ndarray 
 
     :returns: (eigvals, eigvecs) of decomposition
     """
@@ -56,7 +55,7 @@ def pca_from_cov(cov, lower=0, max_components=None, max_energy_fraction=None):
     vartot = w.sum()
 
     # sort the eigenvals and vecs by decreasing magnitude
-    a = numpy.argsort(w)[::-1]
+    a = np.argsort(w)[::-1]
     w = w[a]
     v = v[:,a]
 
@@ -104,8 +103,8 @@ def pca_from_examples(X, max_components=None, max_energy_fraction=None,
         X = X.copy()
     centered_X = X
     if not x_centered:
-        centered_X -= numpy.mean(centered_X, axis=0)
-    cov_X = numpy.dot(centered_X.T, centered_X) / (len(X)- 1)
+        centered_X -= np.mean(centered_X, axis=0)
+    cov_X = np_dot(centered_X.T, centered_X) / (len(X)- 1)
     evals, evecs = pca_from_cov(cov_X, max_components=max_components,
             max_energy_fraction=max_energy_fraction)
     return ((evals, evecs), centered_X)
@@ -122,8 +121,8 @@ def pca_whiten((eigvals, eigvecs), centered_X,eps=1e-14):
     :param pca: the (w,v) pair returned by e.g. pca_from_examples(X)
 
     """
-    pca_of_X = numpy.dot(centered_X, eigvecs)
-    pca_of_X /= numpy.sqrt(eigvals+eps)
+    pca_of_X = np_dot(centered_X, eigvecs)
+    pca_of_X /= np.sqrt(eigvals+eps)
     return pca_of_X
 
 
@@ -134,7 +133,7 @@ def pca_whiten_inverse((eigvals, eigvecs), whitened_X, eps=1e-14):
     The inverse is not perfect because pca_whitening discards the least-significant components
     of the data.
     """
-    return numpy.dot(whitened_X * (numpy.sqrt(eigvals+eps)), eigvecs.T)
+    return np_dot(whitened_X * (np.sqrt(eigvals+eps)), eigvecs.T)
 
 
 def pca_whiten2(pca_from_examples_rval, eps=1e-14):
@@ -159,8 +158,8 @@ def pca_whiten2(pca_from_examples_rval, eps=1e-14):
 
     """
     ((eigvals, eigvecs), centered_X) = pca_from_examples_rval
-    pca_of_X = numpy.dot(centered_X, eigvecs)
-    pca_of_X /= numpy.sqrt(eigvals+eps)
+    pca_of_X = np_dot(centered_X, eigvecs)
+    pca_of_X /= np.sqrt(eigvals+eps)
     return ((eigvals, eigvecs), pca_of_X)
 
 
@@ -170,6 +169,6 @@ def zca_whiten((eigvals, eigvecs), centered_X):
     See also fft_whiten.py
     """
     pca_of_X = pca_whiten((eigvals, eigvecs), centered_X)
-    return numpy.dot(pca_of_X, eigvecs.T)
+    return np_dot(pca_of_X, eigvecs.T)
 
 

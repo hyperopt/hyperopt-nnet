@@ -100,7 +100,7 @@ def preproc_space(
             nnet_i_raw,
             train_task_x,
             lr=hp.lognormal('cd_lr_%i' % ii, np.log(.01), 2),
-            seed=hp.randint('cd_seed_%i' % ii, 10),
+            seed=1 + hp.randint('cd_seed_%i' % ii, 10),
             n_epochs=hp.qloguniform('cd_epochs_%i' % ii,
                                     np.log(1),
                                     np.log(cd_epochs_max),

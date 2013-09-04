@@ -12,6 +12,8 @@ import numpy as np
 import theano
 import theano.tensor as TT
 try:
+    # -- TODO: only import this if we intend to use Theano's GPU codegen
+    raise ImportError()
     import theano.sandbox.cuda.rng_curand
     RandomStreams = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams
 except ImportError:
