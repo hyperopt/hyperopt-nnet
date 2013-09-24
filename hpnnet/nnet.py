@@ -311,7 +311,7 @@ def nnet_pretrain_top_layer_cd(nnet,
         if time_limit and time_module.time() > time_limit:
             break
         e_lr = lr * min(1, (float(lr_anneal_start) / (epoch + 1)))
-        s_lr.set_value(e_lr)
+        s_lr.set_value(float(e_lr))
 
         costs = [cd1_fn(bi) for bi in xrange(n_batches_per_epoch)]
         if not epoch % 10:
