@@ -119,10 +119,10 @@ def preproc_space(
     # this prior is not what I would do now, but it is what I did then...
     nnet_features = hp.pchoice(
         'depth',
-        [(.5, nnets[0]),
-         (.25, nnets[1]),
-         (.125, nnets[2]),
-         (.125, nnets[3])])
+        [(.5, nnets[0:1]),
+         (.25, nnets[0:2]),
+         (.125, nnets[0:3]),
+         (.125, nnets[0:4])])
 
     sup_nnet = scope.nnet_add_layer(
         nnet_features,
