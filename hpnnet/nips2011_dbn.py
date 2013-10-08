@@ -75,12 +75,12 @@ def preproc_space(
     time_limit = scope.time() + max_seconds
 
     nnets = [nnet1]
-    nnet_i = nnet1
+    nnet_i_pt = nnet1
     for ii, cd_epochs_max in enumerate([3000, 2000, 1500]):
         layer = scope.random_sigmoid_layer(
             # -- hack to get different seeds for dif't layers
             seed=param_seed + cd_epochs_max,
-            n_in=scope.getattr(nnet_i, 'n_out'),
+            n_in=scope.getattr(nnet_i_pt, 'n_out'),
             n_out=hp.qloguniform('n_hid_%i' % ii,
                                  np.log(2**7),
                                  np.log(2**12),
@@ -92,7 +92,7 @@ def preproc_space(
                     ('Glorot',)]),
             squash='logistic',
             )
-        nnet_i_raw = scope.nnet_add_layer(nnet_i, layer)
+        nnet_i_raw = scope.nnet_add_layer(nnet_i_pt, layer)
         # -- repeatedly calculating lower-layers wastes some CPU, but keeps
         #    memory usage much more stable across jobs (good for cluster)
         #    and the wasted CPU is not so much overall.
